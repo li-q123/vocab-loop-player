@@ -29,6 +29,7 @@
           <span id="wordCounter">0 / 0</span>
         </div>
         <div class="word-display" id="currentWord">添加一个单词开始</div>
+        <div class="phonetic-display" id="currentPhonetic"></div>
         <div class="meaning-display" id="currentMeaning">英文读音、英文拼写、中文意思会自动循环播放</div>
         <div class="phase-track" aria-hidden="true">
           <span id="phaseEnglish">英</span>
@@ -75,9 +76,14 @@
           <input id="wordInput" name="word" type="text" autocomplete="off" placeholder="example" required>
         </label>
         <label>
+          音标
+          <input id="phoneticInput" name="phonetic" type="text" autocomplete="off" placeholder="自动查，也可手填">
+        </label>
+        <label>
           中文意思
           <input id="meaningInput" name="meaning" type="text" autocomplete="off" placeholder="例子" required>
         </label>
+        <p class="lookup-status" id="lookupStatus">输入英文单词后会自动查中文意思和音标</p>
         <button class="primary" type="submit">添加</button>
       </form>
 

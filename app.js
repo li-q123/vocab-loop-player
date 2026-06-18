@@ -2,15 +2,19 @@ const STORAGE_KEY = "vocab-loop-player.words";
 const SETTINGS_KEY = "vocab-loop-player.settings";
 const SEED_IMPORT_KEY = "vocab-loop-player.seed.words-xlsx.v1";
 const SEED_WORDS_URL = "seed-words.json";
+const PHONETIC_API_BASE = "https://api.dictionaryapi.dev/api/v2/entries/en/";
 const WORD_REPETITIONS = 3;
 const MAX_MEANING_PARTS = 5;
 
 const elements = {
   wordForm: document.querySelector("#wordForm"),
   wordInput: document.querySelector("#wordInput"),
+  phoneticInput: document.querySelector("#phoneticInput"),
   meaningInput: document.querySelector("#meaningInput"),
+  lookupStatus: document.querySelector("#lookupStatus"),
   wordList: document.querySelector("#wordList"),
   currentWord: document.querySelector("#currentWord"),
+  currentPhonetic: document.querySelector("#currentPhonetic"),
   currentMeaning: document.querySelector("#currentMeaning"),
   playState: document.querySelector("#playState"),
   wordCounter: document.querySelector("#wordCounter"),
@@ -35,13 +39,17 @@ const elements = {
 };
 
 const sampleWords = [
-  { id: crypto.randomUUID(), word: "curious", meaning: "好奇的" },
-  { id: crypto.randomUUID(), word: "steady", meaning: "稳定的；沉着的" },
-  { id: crypto.randomUUID(), word: "practice", meaning: "练习；实践" },
+  { id: crypto.randomUUID(), word: "curious", phonetic: "/ˈkjʊriəs/", meaning: "好奇的" },
+  { id: crypto.randomUUID(), word: "steady", phonetic: "/ˈstedi/", meaning: "稳定的；沉着的" },
+  { id: crypto.randomUUID(), word: "practice", phonetic: "/ˈpræktɪs/", meaning: "练习；实践" },
 ];
 
 const state = {
   words: loadWords(),
+  dictionary: new Map(),
+  phoneticCache: new Map(),
+  lookupTimer: 0,
+  lookupId: 0,
   currentIndex: 0,
   isPlaying: false,
   isPaused: false,
@@ -60,16 +68,23 @@ function bindEvents() {
   elements.wordForm.addEventListener("submit", (event) => {
     event.preventDefault();
     const word = elements.wordInput.value.trim();
+    const phonetic = normalizePhonetic(elements.phoneticInput.value.trim());
     const meaning = elements.meaningInput.value.trim();
 
     if (!word || !meaning) return;
 
-    state.words.push({ id: crypto.randomUUID(), word, meaning: simplifyMeaning(meaning) });
+    state.words.push({ id: crypto.randomUUID(), word, phonetic, meaning: simplifyMeaning(meaning) });
     state.currentIndex = state.words.length - 1;
     saveWords();
     render();
     elements.wordForm.reset();
+    elements.lookupStatus.textContent = "输入英文单词后会自动查中文意思和音标";
     elements.wordInput.focus();
+  });
+
+  elements.wordInput.addEventListener("input", () => {
+    window.clearTimeout(state.lookupTimer);
+    state.lookupTimer = window.setTimeout(() => lookupWord(elements.wordInput.value), 350);
   });
 
   elements.playButton.addEventListener("click", () => {
@@ -119,7 +134,9 @@ function bindEvents() {
 function loadWords() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    return Array.isArray(saved) ? saved.filter((item) => item.word && item.meaning) : [];
+    return Array.isArray(saved)
+      ? saved.filter((item) => item.word && item.meaning).map((item) => ({ ...item, phonetic: item.phonetic || "" }))
+      : [];
   } catch {
     return [];
   }
@@ -160,6 +177,13 @@ function simplifyMeaning(rawMeaning) {
   return parts.length > 0 ? parts.join("，") : rawMeaning.trim();
 }
 
+function normalizePhonetic(rawPhonetic) {
+  const text = rawPhonetic.trim();
+  if (!text) return "";
+  if (text.startsWith("/") || text.startsWith("[")) return text;
+  return `/${text}/`;
+}
+
 function saveWords() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.words));
 }
@@ -168,16 +192,18 @@ async function importSeedWords() {
   if (localStorage.getItem(SEED_IMPORT_KEY)) return;
 
   try {
-    const response = await fetch(SEED_WORDS_URL, { cache: "no-store" });
-    if (!response.ok) return;
-
-    const seedWords = await response.json();
-    if (!Array.isArray(seedWords)) return;
+    const seedWords = await loadSeedDictionary();
+    if (seedWords.length === 0) return;
 
     const existingWords = new Set(state.words.map((item) => item.word.trim().toLowerCase()));
     const additions = seedWords
       .filter((item) => item.word && item.meaning && !existingWords.has(item.word.trim().toLowerCase()))
-      .map((item) => ({ id: crypto.randomUUID(), word: item.word.trim(), meaning: simplifyMeaning(item.meaning) }));
+      .map((item) => ({
+        id: crypto.randomUUID(),
+        word: item.word.trim(),
+        phonetic: normalizePhonetic(item.phonetic || ""),
+        meaning: simplifyMeaning(item.meaning),
+      }));
 
     localStorage.setItem(SEED_IMPORT_KEY, String(Date.now()));
 
@@ -191,6 +217,107 @@ async function importSeedWords() {
   } catch {
     elements.playState.textContent = "可手动添加单词";
   }
+}
+
+async function loadSeedDictionary() {
+  if (state.dictionary.size > 0) return Array.from(state.dictionary.values());
+
+  const response = await fetch(SEED_WORDS_URL, { cache: "no-store" });
+  if (!response.ok) return [];
+
+  const seedWords = await response.json();
+  if (!Array.isArray(seedWords)) return [];
+
+  seedWords.forEach((item) => {
+    if (!item.word || !item.meaning) return;
+    const normalized = {
+      word: item.word.trim(),
+      phonetic: normalizePhonetic(item.phonetic || ""),
+      meaning: simplifyMeaning(item.meaning),
+    };
+    state.dictionary.set(normalized.word.toLowerCase(), normalized);
+  });
+
+  return Array.from(state.dictionary.values());
+}
+
+async function lookupWord(rawWord) {
+  const word = rawWord.trim().toLowerCase();
+  const lookupId = state.lookupId + 1;
+  state.lookupId = lookupId;
+
+  if (!word) {
+    elements.lookupStatus.textContent = "输入英文单词后会自动查中文意思和音标";
+    return;
+  }
+
+  elements.lookupStatus.textContent = "正在查词...";
+
+  try {
+    const seedWords = await loadSeedDictionary();
+    if (lookupId !== state.lookupId) return;
+
+    const localEntry = state.dictionary.get(word) || seedWords.find((item) => item.word.toLowerCase() === word);
+    if (localEntry && !elements.meaningInput.value.trim()) {
+      elements.meaningInput.value = localEntry.meaning;
+    }
+
+    const cachedPhonetic = state.phoneticCache.get(word) || localEntry?.phonetic || "";
+    if (cachedPhonetic && !elements.phoneticInput.value.trim()) {
+      elements.phoneticInput.value = cachedPhonetic;
+    }
+
+    const fetchedPhonetic = cachedPhonetic || (await fetchPhonetic(word));
+    if (lookupId !== state.lookupId) return;
+
+    if (fetchedPhonetic && !elements.phoneticInput.value.trim()) {
+      elements.phoneticInput.value = fetchedPhonetic;
+    }
+
+    if (localEntry && fetchedPhonetic) {
+      elements.lookupStatus.textContent = "已自动填入中文意思和音标";
+    } else if (localEntry) {
+      elements.lookupStatus.textContent = "已自动填入中文意思，音标可手填";
+    } else if (fetchedPhonetic) {
+      elements.lookupStatus.textContent = "已自动填入音标，中文意思可手填";
+    } else {
+      elements.lookupStatus.textContent = "词典暂未找到，可手动填写";
+    }
+  } catch {
+    if (lookupId === state.lookupId) {
+      elements.lookupStatus.textContent = "在线音标暂时查不到，可手动填写";
+    }
+  }
+}
+
+async function fetchPhonetic(word) {
+  if (state.phoneticCache.has(word)) return state.phoneticCache.get(word);
+
+  try {
+    const response = await fetch(`${PHONETIC_API_BASE}${encodeURIComponent(word)}`);
+    if (!response.ok) return "";
+
+    const entries = await response.json();
+    const phonetic = extractPhonetic(entries);
+    if (phonetic) state.phoneticCache.set(word, phonetic);
+    return phonetic;
+  } catch {
+    return "";
+  }
+}
+
+function extractPhonetic(entries) {
+  if (!Array.isArray(entries)) return "";
+
+  for (const entry of entries) {
+    if (entry.phonetic) return normalizePhonetic(entry.phonetic);
+
+    const phonetics = Array.isArray(entry.phonetics) ? entry.phonetics : [];
+    const textEntry = phonetics.find((item) => item.text);
+    if (textEntry?.text) return normalizePhonetic(textEntry.text);
+  }
+
+  return "";
 }
 
 function restoreSettings() {
@@ -228,6 +355,7 @@ function render() {
   const current = state.words[state.currentIndex];
 
   elements.currentWord.textContent = current?.word || "添加一个单词开始";
+  elements.currentPhonetic.textContent = current?.phonetic || "";
   elements.currentMeaning.textContent = current?.meaning || "英文读音、英文拼写、中文意思会自动循环播放";
   elements.wordCounter.textContent = hasWords ? `${state.currentIndex + 1} / ${state.words.length}` : "0 / 0";
   elements.playButton.disabled = !hasWords;
@@ -265,6 +393,9 @@ function renderWordList() {
     const meaning = document.createElement("span");
     meaning.textContent = item.meaning;
 
+    const phonetic = document.createElement("em");
+    phonetic.textContent = item.phonetic || "";
+
     const actions = document.createElement("div");
     actions.className = "word-actions";
 
@@ -282,7 +413,7 @@ function renderWordList() {
     deleteButton.textContent = "删";
     deleteButton.addEventListener("click", () => deleteWord(index));
 
-    main.append(word, meaning);
+    main.append(word, phonetic, meaning);
     actions.append(chooseButton, deleteButton);
     row.append(main, actions);
     elements.wordList.append(row);

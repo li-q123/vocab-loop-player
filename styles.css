@@ -179,6 +179,15 @@ h2 {
   font-size: 1.15rem;
 }
 
+.phonetic-display {
+  min-height: 26px;
+  margin-top: 8px;
+  color: var(--accent);
+  font-size: 1.08rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
 .phase-track {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -262,6 +271,14 @@ h2 {
   background: var(--surface-strong);
 }
 
+.lookup-status {
+  min-height: 20px;
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
 .list-header {
   margin-top: 16px;
 }
@@ -306,7 +323,8 @@ h2 {
 }
 
 .word-main strong,
-.word-main span {
+.word-main span,
+.word-main em {
   display: block;
   overflow-wrap: anywhere;
 }
@@ -318,6 +336,13 @@ h2 {
 .word-main span {
   margin-top: 3px;
   color: var(--muted);
+}
+
+.word-main em {
+  margin-top: 2px;
+  color: var(--accent);
+  font-style: normal;
+  font-size: 0.92rem;
 }
 
 .word-actions {

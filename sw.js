@@ -1,4 +1,4 @@
-const CACHE_NAME = "vocab-loop-v3";
+const CACHE_NAME = "vocab-loop-v4";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json", "./icon.svg", "./seed-words.json"];
 
 self.addEventListener("install", (event) => {
